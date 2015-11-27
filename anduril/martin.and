@@ -7,7 +7,7 @@ authors = "Christian Frech and Marko Laakso"
 //------------------------------------------------------------------------------------------------
 
 runGSEA = false
-runNetwork = false
+runNetwork = true
 
 //------------------------------------------------------------------------------------------------
 //--- INPUT DATA
@@ -125,7 +125,7 @@ for comparison : std.itercsv(inputComparisons)
 		columnOut = "Sample",
 		isList    = true,
 		regexp1   = "ID=(" + gCase + "|" + gControl + ")",
-		@name     = "sampleIds_" + comparison.ID
+		@name     = "sampleIds_" + std.quote(comparison.ID, type="Anduril")
 	)
 
 	// add group record	
@@ -198,11 +198,17 @@ for sample, bam : alignedBams
 	(
 		var1 = bam,
 		var2 = gtfNorRNA.optOut1,
-		script = "htseq-count -f bam -t exon -s no @var1@ @var2@ | grep -v '^__' > @optOut1@",
+		script = "htseq-count -f bam -t exon -s no @var1@ @var2@ > @optOut1@.part && mv @optOut1@.part @optOut1@",
 		@name = "htseq_" + sample
 	)
 	bamCounts[sample] = count.optOut1
 }
+
+htseqExprMatrix = HTSeqExprMatrix
+(
+	samples      = Array2CSV(array=bamCounts, @name="htseq_filelist"),
+	inclusionKey = ""
+)
 
 deseqExprMatrix = DESeqExpr
 (
@@ -218,15 +224,17 @@ deseqExprMatrix = DESeqExpr
 
 include "/mnt/projects/iamp/scripts/anduril/qc.and"
 
-qcReport = getQCReport
+qcReport  = getQCReport
 (
-	alignedBAMs = alignedBams,
-    gtf = gtf,
-    counts = bamCounts,
-    force expr   = deseqExprMatrix.expr,
-    force groups = sampleGroupsSimple,
+	samples                = samples,
+	alignedBAMs            = alignedBams,
+    gtf                    = gtf,
+    countMatrix            = htseqExprMatrix.countArray["all"],
+    force expr             = deseqExprMatrix.expr,
+    force groups           = sampleGroupsSimple,
+    force inputSamples     = inputSamples,
     readStatsSamplesPerRow = 6,
-    readStatsYMax = 60
+    readStatsYMax          = 60
 )
 
 // transformed and annotated expression matrix for further analysis in Qlucore
@@ -275,16 +283,16 @@ for ID, comparison : comparisons
 {
 	deseq = DESeq2
 	(
+		countMatrix             = htseqExprMatrix.countArray["all"],
 		samples                 = inputSamples,
 		force sampleGroups      = sampleGroups,
-		counts                  = bamCounts,
-	    controlGroup            = comparison.controlG,
 	    caseGroup               = comparison.caseG,
+	    controlGroup            = comparison.controlG,
 	    otherGroups             = comparison.otherG,
-	    design                  = comparison.design,
-	    label                   = ID,
+		design                  = comparison.design,
+	    colSuffix               = ID,
 	    minReplicatesForReplace = 7,
-	    @name                   = "deseq_" + ID
+	    @name                   = "deseq_" + std.quote(ID, type="Anduril")
 	)
 	degAllLst[ID] = deseq.results
 
@@ -313,9 +321,9 @@ for ID, comparison : comparisons
 			FROM table1 G
 				LEFT OUTER JOIN table2 AS A ON (G."ids" = A."Ensembl")
 				LEFT OUTER JOIN table3 AS D ON (G."ids" = D."Ensembl Gene ID")
-			ORDER  BY "q", ABS("fc") DESC
+			ORDER BY ABS("fc") DESC, "q"
 		''',
-		@name  = "deseqAnnotated_"+ID
+		@name  = "deseqAnnotated_" + std.quote(ID, type="Anduril")
 	)
 		
 	// subset statistically significant DEGs
@@ -331,9 +339,9 @@ for ID, comparison : comparisons
 					   ("q"       <= """ + comparison.qLimit  + """) AND
 					   (("meanA"  >= """ + comparison.exprLimit + """) OR
 					   ( "meanB"  >= """ + comparison.exprLimit + """))
-					   ORDER  BY 1
+					   ORDER BY ABS("fc") DESC, "q"
 			""",
-			@name  = "degCalled_"+ID
+			@name  = "degCalled_" + std.quote(ID, type="Anduril")
 	)
 	degCalledLst[ID] = degCalled.table	
 }
@@ -368,7 +376,7 @@ for ID, comparison : comparisons
 		caption = "Scatter plot of log2 fold-changes vs. p-values (aka 'volcano plot') comparing gene expression between " + comparison.caseG + " and " + comparison.controlG + " samples.",
 		sectionTitle="Volcano plot " + std.quote(ID, type="latex"),
 		sectionType="subsubsection",
-		@name = "degVolcanoPlot_" + ID
+		@name = "degVolcanoPlot_" + std.quote(ID, type="Anduril")
 	)
 
 	//--- TABLES WITH UP- AND DOWN-REULATED GENES --------------------------------------------------------------------------//
@@ -382,7 +390,7 @@ for ID, comparison : comparisons
 		ID=ID,
 		section="Genes with higher expression in "+comparison.caseG+" than "+comparison.controlG+" samples",
 		sectionType="subsubsection",
-		@name = "degTableUp_"+ID
+		@name = "degTableUp_" + std.quote(ID, type="Anduril")
 	)
 
 	degTableDn = getDEGTableReport
@@ -394,7 +402,7 @@ for ID, comparison : comparisons
 		ID=ID,
 		section="Genes with lower expression in "+comparison.caseG+" than "+comparison.controlG+" samples",
 		sectionType="subsubsection",
-		@name = "degTableDn_"+ID
+		@name = "degTableDn_" + std.quote(ID, type="Anduril")
 	)
 
 	//--- BOX PLOTS TOP UP- AND DOWN-REGULATED GENES ----------------------------------------------------------------------//
@@ -410,7 +418,7 @@ for ID, comparison : comparisons
 		labelOutliers=false,
 		cexGroupLabel=0.8,
 		sectionType="subsubsection",
-		@name = "degBoxplotUp_"+ID
+		@name = "degBoxplotUp_" + std.quote(ID, type="Anduril")
 	)
 
 	degBoxplotDn = getDEGBoxPlots
@@ -489,7 +497,7 @@ for ID, comparison : comparisons
 			FROM   table2 T2 LEFT JOIN table1 T1 ON T2."ids" = T1."ids" 
 			WHERE  T1."ids" IS NULL AND T2."meanExpr'''+ID+'''" < 10
             ''',
-		@name    = "statusTable_"+ID,
+		@name    = "statusTable_" + std.quote(ID, type="Anduril"),
 		@enabled = runNetwork
 	)
 	
@@ -503,7 +511,7 @@ for ID, comparison : comparisons
 		title        = "Interaction network of DEGs between " + comparison.caseG + " and " + comparison.controlG,
 		linkTypes    = std.concat(sep=",",
 			//LinkType_pathway_precedence,
-			//LinkType_protein_protein_interaction,
+			LinkType_protein_protein_interaction,
 			LinkType_chemical_reaction,
 			LinkType_protein_activation,
 			LinkType_protein_inhibition,
@@ -526,7 +534,7 @@ for ID, comparison : comparisons
 		),
 		annotRules        = "",
 		bioentityTypes    = BioentityType_gene,
-		maxGap            = 1,
+		maxGap            = 0,
 		cytoscape         = false,
 		useStudies        = "",
 		hideGaps          = false,
@@ -534,7 +542,7 @@ for ID, comparison : comparisons
 		expand            = "connected",
 		statusFilter      = "NA",
 		sectionType       = "subsubsection",
-		@name             = "network_"+ID,
+		@name             = "network_" + std.quote(ID, type="Anduril"),
 		@enabled          = runNetwork
 	)
 	
@@ -596,12 +604,12 @@ vennSetTableReport_mKRASvsWtRASprim_AND_mKRASvsWtRASxeno = VennSetTableReport
 	vennSetData        = vennSetsExpanded,
 	vennSetNames       = {"mKRASvsWtRASprim_AND_mKRASvsWtRASxeno"},
 	outputComparisons  = {"mKRASvsWtRASprim", "mKRASvsWtRASxeno"},
-	degs               = degCalledLst,
+	degs               = degAllLst,
 	geneAnnot          = geneAnnot,
 	section            = "Intersection mKRASvsWtRASprim and mKRASvsWtRASxeno",
 	sectionType        = "subsubsection",
 	caption            = "These genes were found to be significantly differentially expressed in both " + comparisons["mKRASvsWtRASprim"].desc + " (set 'A') and " + comparisons["mKRASvsWtRASxeno"].desc + " (set 'B'). " +
-	                     "Genes sorted by average q-value from most to least significant."
+	                     "Genes sorted by average FC from largest to smallest."
 )
 vennReport["vennSetTableReport_mKRASvsWtRASprim_AND_mKRASvsWtRASxeno"] = vennSetTableReport_mKRASvsWtRASprim_AND_mKRASvsWtRASxeno.report
 
@@ -612,12 +620,12 @@ vennSetTableReport_mNRASvsWtRASprim_AND_mNRASvsWtRASxeno = VennSetTableReport
 	vennSetData        = vennSetsExpanded,
 	vennSetNames       = {"mNRASvsWtRASprim_AND_mNRASvsWtRASxeno"},
 	outputComparisons  = {"mNRASvsWtRASprim", "mNRASvsWtRASxeno"},
-	degs               = degCalledLst,
+	degs               = degAllLst,
 	geneAnnot          = geneAnnot,
 	section            = "Intersection mNRASvsWtRASprim and mNRASvsWtRASxeno",
 	sectionType        = "subsubsection",
 	caption            = "These genes were found to be significantly differentially expressed in both " + comparisons["mNRASvsWtRASprim"].desc + " (set 'A') and " + comparisons["mNRASvsWtRASxeno"].desc + " (set 'B'). " +
-	                     "Genes sorted by average q-value from most to least significant."
+	                     "Genes sorted by average FC from largest to smallest."
 )
 vennReport["vennSetTableReport_mNRASvsWtRASprim_AND_mNRASvsWtRASxeno"] = vennSetTableReport_mNRASvsWtRASprim_AND_mNRASvsWtRASxeno.report
 
@@ -628,12 +636,12 @@ vennSetTableReport_mRASvsWtRASprim_AND_mRASvsWtRASxeno = VennSetTableReport
 	vennSetData        = vennSetsExpanded,
 	vennSetNames       = {"mRASvsWtRASprim_AND_mRASvsWtRASxeno"},
 	outputComparisons  = {"mRASvsWtRASprim", "mRASvsWtRASxeno"},
-	degs               = degCalledLst,
+	degs               = degAllLst,
 	geneAnnot          = geneAnnot,
 	section            = "Intersection mRASvsWtRASprim and mRASvsWtRASxeno",
 	sectionType        = "subsubsection",
 	caption            = "These genes were found to be significantly differentially expressed in both " + comparisons["mRASvsWtRASprim"].desc + " (set 'A') and " + comparisons["mRASvsWtRASxeno"].desc + " (set 'B'). " +
-	                     "Genes sorted by average q-value from most to least significant."
+	                     "Genes sorted by average FC from largest to smallest."
 )
 vennReport["vennSetTableReport_mRASvsWtRASprim_AND_mRASvsWtRASxeno"] = vennSetTableReport_mRASvsWtRASprim_AND_mRASvsWtRASxeno.report
 
@@ -644,12 +652,12 @@ vennSetTableReport_mCREBBPvsWtCREBBPprim_AND_mCREBBPvsWtCREBBPxeno = VennSetTabl
 	vennSetData        = vennSetsExpanded,
 	vennSetNames       = {"mCREBBPvsWtCREBBPprim_AND_mCREBBPvsWtCREBBPxeno"},
 	outputComparisons  = {"mCREBBPvsWtCREBBPprim", "mCREBBPvsWtCREBBPxeno"},
-	degs               = degCalledLst,
+	degs               = degAllLst,
 	geneAnnot          = geneAnnot,
 	section            = "Intersection mCREBBPvsWtCREBBPprim and mCREBBPvsWtCREBBPxeno",
 	sectionType        = "subsubsection",
 	caption            = "These genes were found to be significantly differentially expressed in both " + comparisons["mCREBBPvsWtCREBBPprim"].desc + " (set 'A') and " + comparisons["mCREBBPvsWtCREBBPxeno"].desc + " (set 'B'). " +
-	                     "Genes sorted by average q-value from most to least significant."
+	                     "Genes sorted by average FC from largest to smallest."
 )
 vennReport["vennSetTableReport_mCREBBPvsWtCREBBPprim_AND_mCREBBPvsWtCREBBPxeno"] = vennSetTableReport_mCREBBPvsWtCREBBPprim_AND_mCREBBPvsWtCREBBPxeno.report
 
@@ -663,7 +671,7 @@ boxplotCustom = ExpressionBoxPlot
 	force sampleGroups = sampleGroups,
 	includeGroups="mRAS,wtRAS",
 	annotation = geneAnnot,
-	hgnc = "KRAS,NRAS,FLT3,CREBBP",
+	hgnc = "KRAS,NRAS,FLT3,CREBBP,FOXM1",
 	nRow = 1,
 	nCol = 5,
 	height=4,
@@ -699,7 +707,7 @@ for comparison : std.itercsv(inputComparisons) {
 		title=comparison.ID,
 		pvalue=0.01,
 		includeHeader=std.length(pgeReportLst)==0,
-		@name="pge_"+comparison.ID
+		@name="pge_" + std.quote(comparison.ID, type="Anduril")
 	)
 }
 	
@@ -802,7 +810,7 @@ for ID, comparison : comparisons
 		annotation = geneNames,
 		colP = "p" + ID,
 		colFC= "fc" + ID,
-		@name = "rnk_" + ID,
+		@name = "rnk_" + std.quote(ID, type="Anduril"),
 		@enabled = runGSEA
 	)
 }
@@ -837,12 +845,12 @@ for ID, comparison : comparisons
 		        "/mnt/projects/generic/data/msigdb5.0/c6.all.v5.0.symbols.gmt," + 
 		        "/mnt/projects/generic/data/msigdb5.0/c7.all.v5.0.symbols.gmt," + 
 		        "/mnt/projects/generic/data/msigdb5.0/h.all.v5.0.symbols.gmt," +
-		        "/mnt/projects/generic/data/laurenti_2013_hematopoietic_lineages.gmt," + 
-		        "/mnt/projects/martin/data/gsea_custom_gene_sets.gmt", 
+		        "/mnt/projects/generic/data/ccri/ccri_custom_gene_sets.gmt," +
+		        "/mnt/projects/generic/data/laurenti_2013_hematopoietic_lineages.gmt", 
 		options = "-nperm " + permutations + " -set_max " + maxSetSize[category] + " -set_min " + minSetSize[category],
 		@memory  = 7000,
 		@cpu     = 2, 			
-		@name = "gseaMSigDB_" + ID,
+		@name = "gseaMSigDB_" + std.quote(ID, type="Anduril"),
 		@enabled = runGSEA
 	)
 	enrichedUp[category][ID] = gseaMSigDB.enrichedUp
@@ -868,7 +876,7 @@ for ID, comparison : comparisons
 		options = "-nperm " + permutations + " -set_max " + maxSetSize[category] + " -set_min " + minSetSize[category],
 		@memory  = 7000,
 		@cpu     = 2, 			
-		@name = "gseaGeneSigDB_" + ID,
+		@name = "gseaGeneSigDB_" + std.quote(ID, type="Anduril"),
 		@enabled = runGSEA
 	)
 	enrichedUp[category][ID] = gseaGeneSigDB.enrichedUp
@@ -894,7 +902,7 @@ for ID, comparison : comparisons
 		options = "-nperm " + permutations + " -set_max " + maxSetSize[category] + " -set_min " + minSetSize[category],
 		@memory  = 7000,
 		@cpu     = 2, 			
-		@name = "gseaDSigDB_" + ID,
+		@name = "gseaDSigDB_" + std.quote(ID, type="Anduril"),
 		@enabled = runGSEA
 	)
 	enrichedUp[category][ID] = gseaDSigDB.enrichedUp
@@ -923,7 +931,7 @@ for ID, comparison : comparisons
 		options = "-nperm " + permutations + " -set_max " + maxSetSize[category] + " -set_min " + minSetSize[category],
 		@memory  = 7000,
 		@cpu     = 2, 			
-		@name = "gseaTFTargets_" + ID,
+		@name = "gseaTFTargets_" + std.quote(ID, type="Anduril"),
 		@enabled = runGSEA
 	)
 	enrichedUp[category][ID] = gseaTFTargets.enrichedUp
@@ -943,10 +951,10 @@ gseaReport = GSEAReport
 	topNTable = 100,
 	expression = degAllLst,
 	geneNames  = geneNames,
-	sigCutoff = 0.3,
-	hsigCutoff = 0.01,
-	overlapSigCutoff = 0.3,
-	overlapHSigCutoff = 0.01,
+	sigCutoff = 0.05,
+	hsigCutoff = 0.001,
+	overlapSigCutoff = 1e-5,
+	overlapHSigCutoff = 1e-8,
 	@enabled = runGSEA
 )
 
