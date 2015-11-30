@@ -13,7 +13,6 @@ runNetwork = true
 //--- INPUT DATA
 //------------------------------------------------------------------------------------------------
 
-inputFastqDir     = INPUT(path="/mnt/projects/martin/data/fastq", recursive=false)
 inputSamples      = INPUT(path="/mnt/projects/martin/data/samples.csv")
 inputSampleGroups = INPUT(path="/mnt/projects/martin/data/sample_groups.csv")
 inputComparisons  = INPUT(path="/mnt/projects/martin/data/comparisons.csv")
@@ -42,7 +41,6 @@ hyperlinkRuleEnsemblGeneCards = StringInput(content=
 //--- PRELUDE
 //------------------------------------------------------------------------------------------------
 
-inputFastqFiles = Folder2Array(folder1 = inputFastqDir, filePattern = "^C[^_]+_([^_]+)_.*[.]txt.gz$")
 moksiskaanInit = MoksiskaanInit(showLog='EnsemblImport,PathwayCommonsImport,PINAImport,WikiPathways')
 ensemblRef = XrefLinkRule(moksiskaan = moksiskaanInit.connection, columns = "Ensembl=Ensembl", xrefTypes  = XrefType_Ensembl_gene)
 
@@ -69,6 +67,7 @@ for entry : std.itercsv(inputSamples)
 	{
 		'alias' = entry.Alias,
 		'description' = entry.Description,
+		'file' = entry.File,
 		'exclude' = false
 	}
 	
@@ -149,7 +148,7 @@ for comparison : std.itercsv(inputComparisons)
 //--- EXPERIMENTAL SETUP REPORT
 //------------------------------------------------------------------------------------------------
 
-include "/mnt/projects/iamp/scripts/anduril/experimentalSetup.and"
+include "/mnt/projects/martin/anduril/includes/experimentalSetup.and"
 
 experimentReport = experimentalSetupReport
 (
@@ -165,24 +164,23 @@ experimentReport = experimentalSetupReport
 //------------------------------------------------------------------------------------------------
 
 alignedBams = record()
-for fastq : std.iterArray(inputFastqFiles) 
+for id, sample : samples 
 {
-	alias = samples[fastq.key+""].alias
-	@out.alignment.filename = alias + '.gsnap.sorted.dupmarked.bam'
+	@out.alignment.filename = sample.alias + '.gsnap.sorted.dupmarked.bam'
 	gsnap = GSNAP
 	(
-		reads     = INPUT(path=fastq.file), 
+		reads     = INPUT(path=sample.file), 
 		options   = "--db=g1k_v37_etv6runx1 --dir=/data_synology/anduril/docker-images/anduril-gsnap_2014_12_28-human_g1k_v37/db/human_g1k_v37 --use-splicing=g1k_v37.splicesites --use-snps=g1k_v37.snp138 --nthreads 15 --maxsearch=100 --npaths=1 --max-mismatches=1 --novelsplicing=0 --batch=4 --genome-unk-mismatch=0",
 		docker    = "biowaste:5000/anduril/gsnap",
-		inputType = "FASTQ",
+		inputType = "auto",
 		@cpu      = 10, 
 		@memory   = 40000,
-		@name     = "gsnap_" + alias,
+		@name     = "gsnap_" + sample.alias,
 		@execute  = "once" 
 	)
 
-	if (!samples[fastq.key+""].exclude) {
-		alignedBams[alias] = gsnap.alignment
+	if (!sample.exclude) {
+		alignedBams[sample.alias] = gsnap.alignment
 	}
 }
 
@@ -222,7 +220,7 @@ deseqExprMatrix = DESeqExpr
 //--- QUALITY CONTROL
 //------------------------------------------------------------------------------------------------
 
-include "/mnt/projects/iamp/scripts/anduril/qc.and"
+include "/mnt/projects/martin/anduril/includes/qc.and"
 
 qcReport  = getQCReport
 (
@@ -350,11 +348,11 @@ for ID, comparison : comparisons
 //--- DEG REPORTS
 //------------------------------------------------------------------------------------------------
 
-include "/mnt/projects/iamp/scripts/anduril/degTable.and"
-include "/mnt/projects/iamp/scripts/anduril/degBoxPlot.and"
-include "/mnt/projects/iamp/scripts/anduril/goClustering.and"
-include "/mnt/projects/iamp/scripts/anduril/goEnrichment.and"
-include "/mnt/projects/iamp/scripts/anduril/expressionHeatmap.and"
+include "/mnt/projects/martin/anduril/includes/degTable.and"
+include "/mnt/projects/martin/anduril/includes/degBoxPlot.and"
+include "/mnt/projects/martin/anduril/includes/goClustering.and"
+include "/mnt/projects/martin/anduril/includes/goEnrichment.and"
+include "/mnt/projects/martin/anduril/includes/expressionHeatmap.and"
 
 degReportLst = record()
 deseqColumnTypes = StringInput(content="Table\tColumn\tType\ntable1\tfc\tDOUBLE\ntable1\tstatus\tINTEGER\n")  // required if degTable is empty (= no significant DEGs)
@@ -593,7 +591,7 @@ vennReport["venn_mKRASvsWtRAS"] = venn.report
 //--- VENN SETS
 //------------------------------------------------------------------------------------------------
 
-include "/mnt/projects/helena_veronika/scripts/anduril/venn.and"
+include "/mnt/projects/martin/anduril/includes/venn.and"
 
 vennSetsExpanded = ExpandCollapse(relation=venn.sets)
 
@@ -695,7 +693,7 @@ boxplotSelectedGenes = LatexCombiner
 //--- POSITIONAL GENE ENRICHMENT
 //------------------------------------------------------------------------------------------------
 
-include "/mnt/projects/iamp/scripts/anduril/pgeReport.and"
+include "/mnt/projects/martin/anduril/includes/pgeReport.and"
 
 pgeReportLst = record()
 for comparison : std.itercsv(inputComparisons) {
@@ -775,7 +773,7 @@ OUTPUT(combinedPDF.document)
 //--- EXCEL FILES WITH DIFFERENTIALLY EXPRESSED GENES
 //------------------------------------------------------------------------------------------------
 
-include "/mnt/projects/iamp/scripts/anduril/degExcel.and"
+include "/mnt/projects/martin/anduril/includes/degExcel.and"
 
 degExcel = degExcelOutput
 (
@@ -797,7 +795,7 @@ OUTPUT(degExcel.allGenes)
 //------------------------------------------------------------------------------------------------
 //--- GENE SET ENRICHMENT ANALYSIS (GSEA)
 //------------------------------------------------------------------------------------------------
-include "/mnt/projects/sarah/scripts/anduril/gsea.and"
+include "/mnt/projects/martin/anduril/includes/gsea.and"
 
 // produce RNK files for each comparison
 
