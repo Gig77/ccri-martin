@@ -435,23 +435,15 @@ for ID, comparison : comparisons
 
 	//--- EXPRESSION HEATMAP --------------------------------------------------------------------------//
 
-	exprMatrixFiltered = CSVFilter
-	(
-		csv            = deseqExprMatrix.expr,
-		auxiliary      = degCalledLst[ID] @require,
-		includeColumns = comparison.sampleIdLst,
-		includeColumns = "RowName",
-		colOrder       = true,
-		@name          = "exprMatrix_" + ID
-	)                      
-
 	exprHeatmap = getHeatmapReport
 	(
-		exprMatrix = exprMatrixFiltered,
-		geneNames = geneNames,
-		group = comparison,
-		sectionType="subsubsection",
-		@name = "heatmap" + ID
+		exprMatrix   = deseqExprMatrix.expr,
+		degCalled    = degCalledLst[ID],
+		geneNames    = geneNames,
+		sampleGroups = sampleGroups,
+		comparison   = comparison,
+		sectionType  = "subsubsection",
+		@name        = "heatmap" + std.quote(ID, type="Anduril")
 	)
 
 	//--- GO ENRICHMENT -------------------------------------------------------------------------------//
